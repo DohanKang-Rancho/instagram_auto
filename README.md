@@ -100,11 +100,12 @@ GitHub 저장소를 Cloudflare Pages에 연결하면 **main 브랜치에 push할
    - **Build command**: `npm run build`
    - **Build output directory**: `dist`
    - **Root directory**: (비워두기)
-3. **Environment variables** (선택):  
-   `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` 설정 시 프로덕션에서 Supabase 연동 가능.
+3. **Environment variables** (Variables and Secrets):
+   - **필수**: `RAPIDAPI_KEY` — RapidAPI 키 (인스타그램 API 호출용, Pages Functions에서 사용)
+   - **선택**: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` — Supabase 연동 시
 4. 저장 후 배포. 이후 **main 브랜치에 push하면 자동으로 재배포**됩니다.
 
-> API 서버(Express)는 Cloudflare Pages에 포함되지 않습니다. 인스타그램 데이터 조회가 필요하면 API 서버를 별도 호스팅하고, 프론트엔드의 API 베이스 URL을 해당 주소로 바꿔야 합니다.
+> 인스타그램 데이터 API는 **Cloudflare Pages Functions**(`/functions/api/instagram/`)로 제공됩니다. 새로고침 시 데이터가 나오려면 위에서 `RAPIDAPI_KEY`를 반드시 설정하세요.
 
 ## 기술 스택
 
