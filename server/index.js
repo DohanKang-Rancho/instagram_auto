@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 
@@ -267,5 +268,6 @@ app.get('/api/instagram/posts/:username', async (req, res) => {
 });
 
 app.listen(PORT, () => {
+  console.log(`RAPIDAPI_KEY loaded: ${RAPIDAPI_KEY ? 'yes' : 'no'}`);
   console.log(`API 서버: http://localhost:${PORT}`);
 });

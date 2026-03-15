@@ -1,30 +1,201 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { supabase } from './lib/supabase'
 import { fetchProfile, fetchPosts } from './api/instagram'
-import { buildMetricRows, normalizeRapidApiPosts, normalizeRapidApiProfile } from './utils/metrics'
-import type { ProfileMetricRow, Dimension, InstagramPost } from './types'
+import {
+  applyFollowerSnapshots,
+  buildMetricRows,
+  normalizeRapidApiPosts,
+  normalizeRapidApiProfile,
+} from './utils/metrics'
+import type {
+  ProfileMetricRow,
+  Dimension,
+  InstagramPost,
+  InstagramFollowerSnapshot,
+} from './types'
 import { exportToExcel } from './utils/excel'
 import './App.css'
 
+function getKstDateString(date = new Date()): string {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  const parts = formatter.formatToParts(date)
+  const year = parts.find((part) => part.type === 'year')?.value ?? '0000'
+  const month = parts.find((part) => part.type === 'month')?.value ?? '00'
+  const day = parts.find((part) => part.type === 'day')?.value ?? '00'
+  return `${year}-${month}-${day}`
+}
+
+function parseDateString(value: string): Date {
+  return new Date(`${value}T00:00:00`)
+}
+
+function shiftDateString(value: string, days: number): string {
+  const date = parseDateString(value)
+  date.setDate(date.getDate() + days)
+  return getKstDateString(date)
+}
+
+function getToday(): Date {
+  return parseDateString(getKstDateString())
+}
+
 function getYesterday(): Date {
-  const d = new Date()
-  d.setDate(d.getDate() - 1)
-  d.setHours(0, 0, 0, 0)
-  return d
+  return parseDateString(shiftDateString(getKstDateString(), -1))
+}
+
+function formatFollowerDoD(value?: number) {
+  if (value == null) {
+    return { text: '-', className: 'flat' }
+  }
+
+  if (value > 0) {
+    return { text: `▲ ${value.toLocaleString()}`, className: 'up' }
+  }
+
+  if (value < 0) {
+    return { text: `▼ ${Math.abs(value).toLocaleString()}`, className: 'down' }
+  }
+
+  return { text: '-', className: 'flat' }
+}
+
+type SortKey =
+  | 'dimension'
+  | 'followerCount'
+  | 'followerDoD'
+  | 'likes'
+  | 'comments'
+  | 'views'
+  | 'avg7dLikes'
+  | 'avg7dComments'
+  | 'avg7dViews'
+  | 'likesDoD'
+  | 'likesWoW'
+  | 'likesYoY'
+  | 'commentsDoD'
+  | 'commentsWoW'
+  | 'commentsYoY'
+  | 'viewsDoD'
+  | 'viewsWoW'
+  | 'viewsYoY'
+
+type SortDirection = 'asc' | 'desc'
+
+const tableColumns: Array<{ key: SortKey; label: string; align?: 'left' | 'right' }> = [
+  { key: 'dimension', label: 'day', align: 'left' },
+  { key: 'followerCount', label: '팔로워 수' },
+  { key: 'followerDoD', label: '팔로워수 DoD' },
+  { key: 'likes', label: '좋아요 수' },
+  { key: 'comments', label: '댓글 수' },
+  { key: 'views', label: '조회수' },
+  { key: 'avg7dLikes', label: '좋아요 7일 평균' },
+  { key: 'avg7dComments', label: '댓글 7일 평균' },
+  { key: 'avg7dViews', label: '조회수 7일 평균' },
+  { key: 'likesDoD', label: '좋아요 DoD' },
+  { key: 'likesWoW', label: '좋아요 WoW' },
+  { key: 'likesYoY', label: '좋아요 YoY' },
+  { key: 'commentsDoD', label: '댓글 DoD' },
+  { key: 'commentsWoW', label: '댓글 WoW' },
+  { key: 'commentsYoY', label: '댓글 YoY' },
+  { key: 'viewsDoD', label: '조회수 DoD' },
+  { key: 'viewsWoW', label: '조회수 WoW' },
+  { key: 'viewsYoY', label: '조회수 YoY' },
+]
+
+function compareValues(a: ProfileMetricRow, b: ProfileMetricRow, sortKey: SortKey) {
+  if (sortKey === 'dimension') {
+    return a.dimension.localeCompare(b.dimension)
+  }
+
+  const left = a[sortKey]
+  const right = b[sortKey]
+  const leftValue = left == null ? Number.NEGATIVE_INFINITY : Number(left)
+  const rightValue = right == null ? Number.NEGATIVE_INFINITY : Number(right)
+
+  if (leftValue === rightValue) {
+    return a.dimension.localeCompare(b.dimension)
+  }
+
+  return leftValue - rightValue
+}
+
+function getSortIndicator(sortKey: SortKey, currentKey: SortKey, direction: SortDirection) {
+  if (sortKey !== currentKey) return '↕'
+  return direction === 'asc' ? '▲' : '▼'
+}
+
+async function saveFollowerSnapshot(profileId: string, followerCount: number) {
+  const snapshotDate = getKstDateString()
+  const snapshotAt = new Date().toISOString()
+  const { error } = await supabase.from('instagram_follower_snapshots').upsert(
+    {
+      profile_id: profileId,
+      snapshot_date: snapshotDate,
+      snapshot_at: snapshotAt,
+      follower_count: followerCount,
+    },
+    { onConflict: 'profile_id,snapshot_date' }
+  )
+
+  if (error) throw error
+}
+
+async function fetchFollowerSnapshots(
+  profileId: string,
+  startDate: string,
+  endDate: string
+): Promise<InstagramFollowerSnapshot[]> {
+  const { data, error } = await supabase
+    .from('instagram_follower_snapshots')
+    .select('profile_id,snapshot_date,snapshot_at,follower_count')
+    .eq('profile_id', profileId)
+    .gte('snapshot_date', startDate)
+    .lte('snapshot_date', endDate)
+    .order('snapshot_date', { ascending: true })
+
+  if (error) throw error
+  return (data ?? []) as InstagramFollowerSnapshot[]
+}
+
+function ensureCurrentFollowerSnapshot(
+  snapshots: InstagramFollowerSnapshot[],
+  profileId: string,
+  followerCount: number | undefined,
+  targetDate: string
+): InstagramFollowerSnapshot[] {
+  if (followerCount == null) return snapshots
+  if (snapshots.some((snapshot) => snapshot.snapshot_date === targetDate)) return snapshots
+
+  return [
+    ...snapshots,
+    {
+      profile_id: profileId,
+      snapshot_date: targetDate,
+      snapshot_at: new Date().toISOString(),
+      follower_count: followerCount,
+    },
+  ]
 }
 
 function App() {
   const [profileId, setProfileId] = useState('')
   const [dimension, setDimension] = useState<Dimension>('dai')
   const [startDate, setStartDate] = useState(() => {
-    const d = new Date()
+    const d = getToday()
     d.setDate(d.getDate() - 30)
-    return d.toISOString().slice(0, 10)
+    return getKstDateString(d)
   })
-  const [endDate, setEndDate] = useState(() => getYesterday().toISOString().slice(0, 10))
+  const [endDate, setEndDate] = useState(() => getKstDateString())
   const [rows, setRows] = useState<ProfileMetricRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<SortKey>('dimension')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
 
   const loadData = useCallback(async () => {
     if (!profileId.trim()) {
@@ -41,42 +212,69 @@ function App() {
       const profile = normalizeRapidApiProfile(profileData)
       const followerCount = profile.follower_count
 
+      const today = getToday()
       const yesterday = getYesterday()
-      const start = new Date(startDate)
-      const requestedEnd = new Date(endDate)
-      const end = requestedEnd > yesterday ? yesterday : requestedEnd
+      const start = parseDateString(startDate)
+      const requestedEnd = parseDateString(endDate)
+      const displayEnd = requestedEnd > today ? today : requestedEnd
+      const postsEnd = displayEnd > yesterday ? yesterday : displayEnd
+      const displayEndString = getKstDateString(displayEnd)
 
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+      if (Number.isNaN(start.getTime()) || Number.isNaN(displayEnd.getTime()) || start > displayEnd) {
         throw new Error('조회 기간을 다시 확인하세요.')
       }
 
-      let postsData = await fetchPosts(
-        profileId.trim(),
-        startDate,
-        end.toISOString().slice(0, 10)
-      )
-      const posts = normalizeRapidApiPosts(postsData) as InstagramPost[]
-      if (posts.length === 0 && postsData && typeof postsData === 'object') {
-        const any = postsData as Record<string, unknown>
-        if (Array.isArray(any)) {
-          postsData = { data: any }
-          posts.push(...normalizeRapidApiPosts(postsData) as InstagramPost[])
+      if (followerCount != null) {
+        try {
+          await saveFollowerSnapshot(profileId.trim(), followerCount)
+        } catch (snapshotError) {
+          console.warn('팔로워 스냅샷 저장 실패', snapshotError)
         }
       }
-      if (posts.length === 0) {
-        console.error('게시물 응답 파싱 실패', postsData)
-        throw new Error('응답에서 게시물 데이터를 찾지 못했습니다. 브라우저 콘솔 로그를 확인하세요.')
+
+      let posts: InstagramPost[] = []
+      if (postsEnd >= start) {
+        let postsData = await fetchPosts(
+          profileId.trim(),
+          startDate,
+          getKstDateString(postsEnd)
+        )
+        posts = normalizeRapidApiPosts(postsData) as InstagramPost[]
+        if (posts.length === 0 && postsData && typeof postsData === 'object') {
+          const any = postsData as Record<string, unknown>
+          if (Array.isArray(any)) {
+            postsData = { data: any }
+            posts.push(...normalizeRapidApiPosts(postsData) as InstagramPost[])
+          }
+        }
       }
-      const built = buildMetricRows(posts, dimension, start, end, followerCount)
-      setRows(built)
+
+      const snapshots = await fetchFollowerSnapshots(
+        profileId.trim(),
+        startDate,
+        displayEndString
+      ).catch((snapshotError) => {
+        console.warn('팔로워 스냅샷 조회 실패', snapshotError)
+        return []
+      })
+      const snapshotsWithFallback = ensureCurrentFollowerSnapshot(
+        snapshots,
+        profileId.trim(),
+        followerCount,
+        getKstDateString()
+      )
+
+      const built = buildMetricRows(posts, dimension, start, displayEnd)
+      const rowsWithSnapshots = applyFollowerSnapshots(built, dimension, snapshotsWithFallback)
+      setRows(rowsWithSnapshots)
 
       const { error: dbError } = await supabase.from('instagram_metrics').upsert(
-        built.map((r) => ({
+        rowsWithSnapshots.map((r) => ({
           profile_id: profileId.trim(),
           dimension: r.dimension,
           dimension_type: dimension,
           start_date: startDate,
-          end_date: endDate,
+          end_date: displayEndString,
           likes: r.likes,
           comments: r.comments,
           views: r.views,
@@ -105,14 +303,39 @@ function App() {
     }
   }, [profileId, dimension, startDate, endDate])
 
+  const sortedRows = useMemo(() => {
+    const nextRows = [...rows]
+    nextRows.sort((a, b) => {
+      const compared = compareValues(a, b, sortKey)
+      return sortDirection === 'asc' ? compared : -compared
+    })
+    return nextRows
+  }, [rows, sortDirection, sortKey])
+
+  const handleSort = useCallback((nextKey: SortKey) => {
+    setSortKey((currentKey) => {
+      if (currentKey === nextKey) {
+        setSortDirection((currentDirection) => (currentDirection === 'asc' ? 'desc' : 'asc'))
+        return currentKey
+      }
+
+      setSortDirection('asc')
+      return nextKey
+    })
+  }, [])
+
   const handleExcel = useCallback(() => {
-    exportToExcel(rows, profileId || 'instagram', dimension)
-  }, [rows, profileId, dimension])
+    exportToExcel(sortedRows, profileId || 'instagram', dimension)
+  }, [sortedRows, profileId, dimension])
 
   return (
     <div className="app">
       <header className="header">
-        <h1>인스타그램 프로필 메트릭</h1>
+        <div>
+          <p className="eyebrow">Instagram Analytics Admin</p>
+          <h1>인스타그램 프로필 메트릭</h1>
+        </div>
+        <div className="header-badge">Live Dashboard</div>
       </header>
 
       <section className="controls">
@@ -154,7 +377,7 @@ function App() {
         </div>
         <div className="actions">
           <button type="button" className="btn primary" onClick={loadData} disabled={loading}>
-            {loading ? '불러오는 중…' : '새로고침'}
+            {loading ? '실행 중…' : '실행'}
           </button>
           <button
             type="button"
@@ -173,35 +396,45 @@ function App() {
         <table className="data-table">
           <thead>
             <tr>
-              <th>차원</th>
-              <th>팔로워 수</th>
-              <th>좋아요 수</th>
-              <th>댓글 수</th>
-              <th>조회수</th>
-              <th>좋아요 7일 평균</th>
-              <th>댓글 7일 평균</th>
-              <th>조회수 7일 평균</th>
-              <th>좋아요 DoD</th>
-              <th>좋아요 WoW</th>
-              <th>좋아요 YoY</th>
-              <th>댓글 DoD</th>
-              <th>댓글 WoW</th>
-              <th>댓글 YoY</th>
-              <th>조회수 DoD</th>
-              <th>조회수 WoW</th>
-              <th>조회수 YoY</th>
+              {tableColumns.map((column) => (
+                <th
+                  key={column.key}
+                  className={column.align === 'left' ? 'align-left' : undefined}
+                >
+                  <button
+                    type="button"
+                    className={`sort-button ${sortKey === column.key ? 'active' : ''}`}
+                    onClick={() => handleSort(column.key)}
+                  >
+                    <span>{column.label}</span>
+                    <span className="sort-indicator">
+                      {getSortIndicator(column.key, sortKey, sortDirection)}
+                    </span>
+                  </button>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && !loading && (
+            {sortedRows.length === 0 && !loading && (
               <tr>
-                <td colSpan={17}>프로필 ID를 입력하고 새로고침을 눌러 데이터를 불러오세요.</td>
+                <td colSpan={18}>프로필 ID를 입력하고 새로고침을 눌러 데이터를 불러오세요.</td>
               </tr>
             )}
-            {rows.map((r, i) => (
+            {sortedRows.map((r, i) => (
               <tr key={`${r.dimension}-${i}`}>
                 <td>{r.dimension}</td>
                 <td>{r.followerCount?.toLocaleString() ?? '-'}</td>
+                <td>
+                  {(() => {
+                    const followerDoD = formatFollowerDoD(r.followerDoD)
+                    return (
+                      <span className={`trend ${followerDoD.className}`}>
+                        {followerDoD.text}
+                      </span>
+                    )
+                  })()}
+                </td>
                 <td>{r.likes.toLocaleString()}</td>
                 <td>{r.comments.toLocaleString()}</td>
                 <td>{r.views.toLocaleString()}</td>

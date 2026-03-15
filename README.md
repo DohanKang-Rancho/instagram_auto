@@ -7,7 +7,7 @@
 - **프로필 ID 입력**: 인스타그램 username 입력
 - **기간 설정**: 시작일 ~ 종료일
 - **차원**: 일별(dai), 주별(week), 월별(month)
-- **테이블**: 좋아요/댓글/조회수, 7일 평균, DoD/WoW/MoM/YoY
+- **테이블**: day, 팔로워 수 스냅샷, 팔로워수 DoD, 좋아요/댓글/조회수, 7일 평균, DoD/WoW/YoY
 - **새로고침**: 실시간 데이터 재호출
 - **Excel 다운로드**: 현재 테이블 데이터를 .xlsx로 저장
 
@@ -18,8 +18,10 @@
 | 콘텐츠 좋아요 수 | 해당 기간·차원별 좋아요 합계 |
 | 댓글 수 | 댓글 합계 |
 | 조회수 | 동영상 조회수 합계 |
+| 팔로워 수 | 조회 또는 자동 적재가 실행된 날짜(day)에만 표시되는 스냅샷 값 |
+| 팔로워수 DoD | 오늘 팔로워 수 - 어제 팔로워 수 |
 | 최근 7일 평균 | 위 1~3에 대한 7일 평균 |
-| DoD / WoW / MoM / YoY | 전일/전주/전월/전년 대비 변화율(%) |
+| DoD / WoW / YoY | 전일/전주/전년 대비 변화율(%) |
 
 ## 환경 설정
 
@@ -38,33 +40,59 @@
 
 3. **Supabase 테이블 (선택)**  
    DB에 메트릭을 저장하려면 Supabase 대시보드 → SQL Editor에서  
-   `supabase/schema.sql` 내용을 실행해 `instagram_metrics` 테이블을 만드세요.
+   `supabase/schema.sql` 내용을 실행해 `instagram_metrics`, `instagram_follower_snapshots` 테이블을 만드세요.
 
 ## 실행 방법
 
-**방법 1: 프론트만 (API 서버 없이)**  
-- 실제 데이터는 불러오지 못하고, 테이블만 사용할 수 있습니다.  
-  ```bash
-  npm run dev
-  ```
-
-**방법 2: API 서버 + 프론트 (권장)**  
-- 터미널 1: API 서버 (RapidAPI 호출)
-  ```bash
-  npm run server
-  ```
-- 터미널 2: 프론트
+- 로컬 개발은 아래 한 줄이면 프론트와 API 서버가 함께 뜹니다.
   ```bash
   npm run dev
   ```
 - 브라우저: http://localhost:5173  
 - 프론트에서 `/api/*` 요청은 Vite 프록시를 통해 `http://localhost:3001`로 전달됩니다.
+- 서버 시작 로그에 `RAPIDAPI_KEY loaded: yes`가 보이면 `.env`가 정상 로드된 상태입니다.
 
 ## RapidAPI
 
 인스타그램 데이터는 **RapidAPI**의 Instagram 관련 API를 사용합니다.  
-현재 코드는 `instagram-scraper-api2.p.rapidapi.com` 기준입니다.  
-사용 중인 API가 다르면 `server/index.js` 안의 `host`와 URL 경로를 해당 API 문서에 맞게 수정하세요.
+현재 코드는 `instagram120.p.rapidapi.com` 기준입니다.  
+- 게시물: `POST /api/instagram/posts`
+- 프로필: `POST /api/instagram/profile`
+
+사용 중인 API가 다르면 `server/index.js`, `functions/api/instagram/`, `supabase/functions/follower-snapshot/` 안의 호스트와 URL 경로를 해당 API 문서에 맞게 수정하세요.
+
+## 팔로워 스냅샷 자동 적재
+
+팔로워 수는 게시물 집계와 달리 **조회 시점 스냅샷**만 저장합니다.  
+웹에서는 `day`가 스냅샷 저장일과 같은 행에만 `팔로워 수`, `팔로워수 DoD`가 표시됩니다.
+
+### 1. Edge Function 배포
+
+```bash
+supabase functions deploy follower-snapshot --project-ref ezbxsonxlsrtpmesirxe
+```
+
+### 2. Edge Function 환경변수 설정
+
+```bash
+supabase secrets set \
+  RAPIDAPI_KEY=YOUR_RAPIDAPI_KEY \
+  RAPIDAPI_INSTAGRAM_HOST=instagram120.p.rapidapi.com \
+  FOLLOWER_SNAPSHOT_CRON_SECRET=YOUR_RANDOM_SECRET \
+  --project-ref ezbxsonxlsrtpmesirxe
+```
+
+### 3. Cron 등록
+
+- Supabase SQL Editor에서 `supabase/cron.sql`을 실행하세요.
+- 기본값은 **매일 23:58 KST** 기준입니다. (`58 14 * * *`, UTC 기준)
+
+### 4. 운영 제안
+
+- 요청하신 시간인 `23:58 KST`로도 동작합니다.
+- 다만 운영 안정성은 `00:05 KST`가 더 좋습니다.
+- 이유: 날짜 경계 직전 2분은 배포 지연, 네트워크 지연, 타임존 경계 이슈가 겹치기 쉽기 때문입니다.
+- `00:05 KST`로 바꾸려면 `supabase/cron.sql`의 cron 표현식을 `5 15 * * *`로 바꾸면 됩니다.
 
 ## GitHub에 push 및 Cloudflare 자동 배포
 

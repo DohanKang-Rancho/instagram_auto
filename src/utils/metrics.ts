@@ -1,4 +1,10 @@
-import type { ProfileMetricRow, InstagramPost, InstagramProfile, Dimension } from '../types';
+import type {
+  ProfileMetricRow,
+  InstagramPost,
+  InstagramProfile,
+  InstagramFollowerSnapshot,
+  Dimension,
+} from '../types';
 
 function parseDate(value: string | number | undefined): Date | null {
   if (!value) return null;
@@ -7,24 +13,47 @@ function parseDate(value: string | number | undefined): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
+function getKstDateParts(date: Date) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = formatter.formatToParts(date);
+
+  return {
+    year: parts.find((part) => part.type === 'year')?.value ?? '0000',
+    month: parts.find((part) => part.type === 'month')?.value ?? '00',
+    day: parts.find((part) => part.type === 'day')?.value ?? '00',
+  };
+}
+
+function formatKstDate(date: Date): string {
+  const { year, month, day } = getKstDateParts(date);
+  return `${year}-${month}-${day}`;
+}
+
 function formatDimensionLabel(d: Date, dim: Dimension): string {
-  if (dim === 'dai') return d.toISOString().slice(0, 10);
+  if (dim === 'dai') return formatKstDate(d);
   if (dim === 'week') {
     const start = new Date(d);
     start.setDate(d.getDate() - d.getDay());
-    return start.toISOString().slice(0, 10) + ' (주)';
+    return formatKstDate(start) + ' (주)';
   }
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')} (월)`;
+  const { year, month } = getKstDateParts(d);
+  return `${year}-${month} (월)`;
 }
 
 function getDimensionKey(d: Date, dim: Dimension): string {
-  if (dim === 'dai') return d.toISOString().slice(0, 10);
+  if (dim === 'dai') return formatKstDate(d);
   if (dim === 'week') {
     const start = new Date(d);
     start.setDate(d.getDate() - d.getDay());
-    return start.toISOString().slice(0, 10);
+    return formatKstDate(start);
   }
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const { year, month } = getKstDateParts(d);
+  return `${year}-${month}`;
 }
 
 function pctChange(current: number, previous: number): number | undefined {
@@ -45,15 +74,20 @@ function toDayEnd(date: Date): Date {
 }
 
 function dateKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  return formatKstDate(date);
+}
+
+function shiftDateString(value: string, days: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days, 12, 0, 0));
+  return formatKstDate(date);
 }
 
 export function buildMetricRows(
   posts: InstagramPost[],
   dimension: Dimension,
   startDate: Date,
-  endDate: Date,
-  followerCount?: number
+  endDate: Date
 ): ProfileMetricRow[] {
   const rangeStart = toDayStart(startDate);
   const rangeEnd = toDayEnd(endDate);
@@ -110,7 +144,6 @@ export function buildMetricRows(
   const rows: ProfileMetricRow[] = sortedKeys.map((key, index) => {
     const b = buckets[key];
     return {
-      followerCount,
       dimension: b.label,
       dimensionType: dimension,
       likes: b.likes,
@@ -143,7 +176,7 @@ export function buildMetricRows(
     };
   });
 
-  // DoD / WoW / MoM / YoY (이전 기간 대비 변화율)
+  // DoD / WoW / YoY (이전 기간 대비 변화율)
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const prev = rows[i - 1];
@@ -168,6 +201,45 @@ export function buildMetricRows(
   }
 
   return rows;
+}
+
+export function applyFollowerSnapshots(
+  rows: ProfileMetricRow[],
+  dimension: Dimension,
+  snapshots: InstagramFollowerSnapshot[]
+): ProfileMetricRow[] {
+  if (dimension !== 'dai') {
+    return rows.map((row) => ({
+      ...row,
+      followerCount: undefined,
+      followerDoD: undefined,
+    }));
+  }
+
+  const snapshotByDate = new Map(
+    snapshots.map((snapshot) => [snapshot.snapshot_date, snapshot])
+  );
+
+  return rows.map((row) => {
+    const snapshot = snapshotByDate.get(row.dimension);
+    if (!snapshot) {
+      return {
+        ...row,
+        followerCount: undefined,
+        followerDoD: undefined,
+      };
+    }
+
+    const previousSnapshot = snapshotByDate.get(shiftDateString(snapshot.snapshot_date, -1));
+    return {
+      ...row,
+      followerCount: snapshot.follower_count,
+      followerDoD:
+        previousSnapshot != null
+          ? snapshot.follower_count - previousSnapshot.follower_count
+          : undefined,
+    };
+  });
 }
 
 export function normalizeRapidApiPosts(data: unknown): InstagramPost[] {

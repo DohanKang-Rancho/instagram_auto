@@ -6,9 +6,15 @@ export function exportToExcel(
   profileId: string,
   dimension: string
 ): void {
+  const formatFollowerDoD = (value?: number) => {
+    if (value == null || value === 0) return ''
+    return value > 0 ? `▲ ${value}` : `▼ ${Math.abs(value)}`
+  }
+
   const data = rows.map((r) => ({
-    차원: r.dimension,
+    day: r.dimension,
     팔로워수: r.followerCount ?? '',
+    '팔로워수 DoD': formatFollowerDoD(r.followerDoD),
     좋아요수: r.likes,
     댓글수: r.comments,
     조회수: r.views,

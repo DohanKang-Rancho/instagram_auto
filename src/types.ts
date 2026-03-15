@@ -2,6 +2,7 @@ export type Dimension = 'dai' | 'week' | 'month';
 
 export interface ProfileMetricRow {
   followerCount?: number;
+  followerDoD?: number;
   dimension: string; // 날짜(YYYY-MM-DD) 또는 주/월 라벨
   dimensionType: Dimension;
   likes: number;
@@ -40,4 +41,11 @@ export interface InstagramProfile {
   following_count?: number;
   media_count?: number;
   profile_pic_url?: string;
+}
+
+export interface InstagramFollowerSnapshot {
+  profile_id: string;
+  snapshot_date: string;
+  snapshot_at: string;
+  follower_count: number;
 }
