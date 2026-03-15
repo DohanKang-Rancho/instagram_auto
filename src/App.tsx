@@ -27,7 +27,10 @@ function App() {
     setError(null)
     setLoading(true)
     try {
-      await fetchProfile(profileId.trim())
+      await fetchProfile(profileId.trim()).catch((profileError) => {
+        console.warn('프로필 조회는 실패했지만 게시물 조회는 계속 진행합니다.', profileError)
+        return null
+      })
       let postsData = await fetchPosts(profileId.trim())
       const posts = normalizeRapidApiPosts(postsData) as InstagramPost[]
       if (posts.length === 0 && postsData && typeof postsData === 'object') {
@@ -36,6 +39,10 @@ function App() {
           postsData = { data: any }
           posts.push(...normalizeRapidApiPosts(postsData) as InstagramPost[])
         }
+      }
+      if (posts.length === 0) {
+        console.error('게시물 응답 파싱 실패', postsData)
+        throw new Error('응답에서 게시물 데이터를 찾지 못했습니다. 브라우저 콘솔 로그를 확인하세요.')
       }
       const start = new Date(startDate)
       const end = new Date(endDate)

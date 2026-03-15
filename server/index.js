@@ -8,7 +8,7 @@ app.use(cors());
 app.use(express.json());
 
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
-const RAPIDAPI_INSTAGRAM_HOST = process.env.RAPIDAPI_INSTAGRAM_HOST || 'instagram-scraper-api2.p.rapidapi.com';
+const RAPIDAPI_INSTAGRAM_HOST = process.env.RAPIDAPI_INSTAGRAM_HOST || 'instagram120.p.rapidapi.com';
 
 // RapidAPI Instagram API 호출 (instagram-scraper-api2 등 호환)
 app.get('/api/instagram/profile/:username', async (req, res) => {
@@ -55,25 +55,31 @@ app.get('/api/instagram/posts/:username', async (req, res) => {
   }
 
   try {
-    const host = RAPIDAPI_INSTAGRAM_HOST;
-    const url = `https://${host}/v1/posts?username_or_id=${encodeURIComponent(username)}`;
+    const host = 'instagram120.p.rapidapi.com';
+    const url = `https://${host}/api/instagram/posts`;
     const response = await fetch(url, {
-      method: 'GET',
+      method: 'POST',
       headers: {
+        'Content-Type': 'application/json',
         'X-RapidAPI-Key': RAPIDAPI_KEY,
         'X-RapidAPI-Host': host,
       },
+      body: JSON.stringify({ username, maxId: '' }),
     });
 
+    const text = await response.text();
     if (!response.ok) {
-      const text = await response.text();
       return res.status(response.status).json({
         error: 'RapidAPI 호출 실패',
-        detail: text.slice(0, 500),
+        status: response.status,
+        statusText: response.statusText,
+        host,
+        endpoint: '/api/instagram/posts',
+        detail: text.slice(0, 1000),
       });
     }
 
-    const data = await response.json();
+    const data = JSON.parse(text || '{}');
     return res.json(data);
   } catch (err) {
     console.error(err);

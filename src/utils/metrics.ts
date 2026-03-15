@@ -125,19 +125,55 @@ export function buildMetricRows(
 export function normalizeRapidApiPosts(data: unknown): InstagramPost[] {
   if (!data || typeof data !== 'object') return [];
   const obj = data as Record<string, unknown>;
+  const result = (obj.result ?? {}) as Record<string, unknown>;
   const media = obj.edge_owner_to_timeline_media as { edges?: unknown[] } | undefined;
-  const items = (obj.data ?? obj.items ?? obj.posts ?? media?.edges ?? []) as unknown[];
+  const items = (
+    result.edges ??
+    result.items ??
+    result.posts ??
+    obj.data ??
+    obj.items ??
+    obj.posts ??
+    media?.edges ??
+    []
+  ) as unknown[];
   if (!Array.isArray(items)) return [];
 
   return items.map((item: unknown) => {
     const i = item as Record<string, unknown>;
     const node = (i.node ?? i) as Record<string, unknown>;
     const takenAt = node.taken_at ?? node.timestamp ?? i.taken_at;
+    const caption = node.caption as Record<string, unknown> | string | undefined;
+    const likeCount =
+      (node.edge_liked_by as { count?: number } | undefined)?.count ??
+      (node.like_count as { count?: number } | number | undefined);
+    const commentCount =
+      (node.edge_media_to_comment as { count?: number } | undefined)?.count ??
+      (node.comment_count as { count?: number } | number | undefined);
+    const viewCount =
+      node.video_view_count ??
+      node.play_count ??
+      node.view_count ??
+      node.video_play_count ??
+      i.video_view_count;
+
     return {
-      id: String(node.id ?? i.id ?? Math.random()),
-      like_count: Number((node.edge_liked_by as { count?: number } | undefined)?.count ?? node.like_count ?? i.like_count ?? 0),
-      comment_count: Number((node.edge_media_to_comment as { count?: number } | undefined)?.count ?? node.comment_count ?? i.comment_count ?? 0),
-      video_view_count: Number(node.video_view_count ?? node.play_count ?? i.video_view_count ?? 0),
+      id: String(node.id ?? node.pk ?? i.id ?? i.pk ?? Math.random()),
+      caption:
+        typeof caption === 'string'
+          ? caption
+          : typeof caption?.text === 'string'
+            ? caption.text
+            : undefined,
+      like_count:
+        typeof likeCount === 'object'
+          ? Number((likeCount as { count?: number }).count ?? 0)
+          : Number(likeCount ?? i.like_count ?? 0),
+      comment_count:
+        typeof commentCount === 'object'
+          ? Number((commentCount as { count?: number }).count ?? 0)
+          : Number(commentCount ?? i.comment_count ?? 0),
+      video_view_count: Number(viewCount ?? 0),
       taken_at: typeof takenAt === 'number' ? new Date(takenAt * 1000).toISOString() : String(takenAt ?? ''),
       timestamp: typeof takenAt === 'number' ? takenAt : undefined,
       media_type: String(node.__typename ?? node.media_type ?? i.media_type ?? ''),

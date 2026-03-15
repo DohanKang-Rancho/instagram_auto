@@ -1,4 +1,4 @@
-const HOST = 'instagram-scraper-api2.p.rapidapi.com';
+const HOST = 'instagram120.p.rapidapi.com';
 
 export async function onRequestGet(context) {
   const { env, params } = context;
@@ -13,19 +13,28 @@ export async function onRequestGet(context) {
   }
 
   try {
-    const url = `https://${HOST}/v1/posts?username_or_id=${encodeURIComponent(username)}`;
+    const url = `https://${HOST}/api/instagram/posts`;
     const res = await fetch(url, {
-      method: 'GET',
+      method: 'POST',
       headers: {
+        'Content-Type': 'application/json',
         'X-RapidAPI-Key': key,
         'X-RapidAPI-Host': HOST,
       },
+      body: JSON.stringify({ username, maxId: '' }),
     });
 
     const text = await res.text();
     if (!res.ok) {
       return new Response(
-        JSON.stringify({ error: 'RapidAPI 호출 실패', detail: text.slice(0, 500) }),
+        JSON.stringify({
+          error: 'RapidAPI 호출 실패',
+          status: res.status,
+          statusText: res.statusText,
+          host: HOST,
+          endpoint: '/api/instagram/posts',
+          detail: text.slice(0, 1000),
+        }),
         { status: res.status, headers: { 'Content-Type': 'application/json' } }
       );
     }
