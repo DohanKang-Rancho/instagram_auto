@@ -66,7 +66,31 @@
 현재 코드는 `instagram-scraper-api2.p.rapidapi.com` 기준입니다.  
 사용 중인 API가 다르면 `server/index.js` 안의 `host`와 URL 경로를 해당 API 문서에 맞게 수정하세요.
 
-## Cloudflare Pages 배포 (Git 연동)
+## GitHub에 push 및 Cloudflare 자동 배포
+
+### 1. GitHub에 첫 push
+
+1. [GitHub에서 새 저장소 생성](https://github.com/new)  
+   - Repository name: `insta` (또는 원하는 이름)  
+   - **Initialize this repository with:** 아무 것도 체크하지 않기 (README, .gitignore 추가 안 함)  
+   - Create repository
+
+2. 터미널에서 원격 추가 후 push (아래 `YOUR_USERNAME`을 본인 GitHub 사용자명으로 변경):
+
+   ```bash
+   git remote add origin https://github.com/YOUR_USERNAME/insta.git
+   git push -u origin main
+   ```
+
+   또는 스크립트 사용:
+
+   ```bash
+   ./scripts/github-push.sh YOUR_USERNAME/insta
+   ```
+
+이후 **main 브랜치에 push할 때마다** 아래 Cloudflare 설정을 해 두면 자동 배포됩니다.
+
+### 2. Cloudflare Pages 배포 (Git 연동)
 
 GitHub 저장소를 Cloudflare Pages에 연결하면 **main 브랜치에 push할 때마다 자동 배포**됩니다.
 
