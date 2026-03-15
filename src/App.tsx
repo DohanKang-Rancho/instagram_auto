@@ -1,10 +1,17 @@
 import { useState, useCallback } from 'react'
 import { supabase } from './lib/supabase'
 import { fetchProfile, fetchPosts } from './api/instagram'
-import { buildMetricRows, normalizeRapidApiPosts } from './utils/metrics'
+import { buildMetricRows, normalizeRapidApiPosts, normalizeRapidApiProfile } from './utils/metrics'
 import type { ProfileMetricRow, Dimension, InstagramPost } from './types'
 import { exportToExcel } from './utils/excel'
 import './App.css'
+
+function getYesterday(): Date {
+  const d = new Date()
+  d.setDate(d.getDate() - 1)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
 
 function App() {
   const [profileId, setProfileId] = useState('')
@@ -14,7 +21,7 @@ function App() {
     d.setDate(d.getDate() - 30)
     return d.toISOString().slice(0, 10)
   })
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [endDate, setEndDate] = useState(() => getYesterday().toISOString().slice(0, 10))
   const [rows, setRows] = useState<ProfileMetricRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -27,11 +34,27 @@ function App() {
     setError(null)
     setLoading(true)
     try {
-      await fetchProfile(profileId.trim()).catch((profileError) => {
+      const profileData = await fetchProfile(profileId.trim()).catch((profileError) => {
         console.warn('프로필 조회는 실패했지만 게시물 조회는 계속 진행합니다.', profileError)
         return null
       })
-      let postsData = await fetchPosts(profileId.trim())
+      const profile = normalizeRapidApiProfile(profileData)
+      const followerCount = profile.follower_count
+
+      const yesterday = getYesterday()
+      const start = new Date(startDate)
+      const requestedEnd = new Date(endDate)
+      const end = requestedEnd > yesterday ? yesterday : requestedEnd
+
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+        throw new Error('조회 기간을 다시 확인하세요.')
+      }
+
+      let postsData = await fetchPosts(
+        profileId.trim(),
+        startDate,
+        end.toISOString().slice(0, 10)
+      )
       const posts = normalizeRapidApiPosts(postsData) as InstagramPost[]
       if (posts.length === 0 && postsData && typeof postsData === 'object') {
         const any = postsData as Record<string, unknown>
@@ -44,9 +67,7 @@ function App() {
         console.error('게시물 응답 파싱 실패', postsData)
         throw new Error('응답에서 게시물 데이터를 찾지 못했습니다. 브라우저 콘솔 로그를 확인하세요.')
       }
-      const start = new Date(startDate)
-      const end = new Date(endDate)
-      const built = buildMetricRows(posts, dimension, start, end)
+      const built = buildMetricRows(posts, dimension, start, end, followerCount)
       setRows(built)
 
       const { error: dbError } = await supabase.from('instagram_metrics').upsert(
@@ -64,15 +85,12 @@ function App() {
           avg_7d_views: r.avg7dViews,
           likes_dod: r.likesDoD,
           likes_wow: r.likesWoW,
-          likes_mom: r.likesMoM,
           likes_yoy: r.likesYoY,
           comments_dod: r.commentsDoD,
           comments_wow: r.commentsWoW,
-          comments_mom: r.commentsMoM,
           comments_yoy: r.commentsYoY,
           views_dod: r.viewsDoD,
           views_wow: r.viewsWoW,
-          views_mom: r.viewsMoM,
           views_yoy: r.viewsYoY,
           updated_at: new Date().toISOString(),
         })),
@@ -155,6 +173,7 @@ function App() {
         <table className="data-table">
           <thead>
             <tr>
+              <th>팔로워 수</th>
               <th>차원</th>
               <th>좋아요 수</th>
               <th>댓글 수</th>
@@ -164,26 +183,24 @@ function App() {
               <th>조회수 7일 평균</th>
               <th>좋아요 DoD</th>
               <th>좋아요 WoW</th>
-              <th>좋아요 MoM</th>
               <th>좋아요 YoY</th>
               <th>댓글 DoD</th>
               <th>댓글 WoW</th>
-              <th>댓글 MoM</th>
               <th>댓글 YoY</th>
               <th>조회수 DoD</th>
               <th>조회수 WoW</th>
-              <th>조회수 MoM</th>
               <th>조회수 YoY</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && !loading && (
               <tr>
-                <td colSpan={20}>프로필 ID를 입력하고 새로고침을 눌러 데이터를 불러오세요.</td>
+                <td colSpan={17}>프로필 ID를 입력하고 새로고침을 눌러 데이터를 불러오세요.</td>
               </tr>
             )}
             {rows.map((r, i) => (
               <tr key={`${r.dimension}-${i}`}>
+                <td>{r.followerCount?.toLocaleString() ?? '-'}</td>
                 <td>{r.dimension}</td>
                 <td>{r.likes.toLocaleString()}</td>
                 <td>{r.comments.toLocaleString()}</td>
@@ -193,15 +210,12 @@ function App() {
                 <td>{r.avg7dViews.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                 <td>{r.likesDoD != null ? `${r.likesDoD}%` : '-'}</td>
                 <td>{r.likesWoW != null ? `${r.likesWoW}%` : '-'}</td>
-                <td>{r.likesMoM != null ? `${r.likesMoM}%` : '-'}</td>
                 <td>{r.likesYoY != null ? `${r.likesYoY}%` : '-'}</td>
                 <td>{r.commentsDoD != null ? `${r.commentsDoD}%` : '-'}</td>
                 <td>{r.commentsWoW != null ? `${r.commentsWoW}%` : '-'}</td>
-                <td>{r.commentsMoM != null ? `${r.commentsMoM}%` : '-'}</td>
                 <td>{r.commentsYoY != null ? `${r.commentsYoY}%` : '-'}</td>
                 <td>{r.viewsDoD != null ? `${r.viewsDoD}%` : '-'}</td>
                 <td>{r.viewsWoW != null ? `${r.viewsWoW}%` : '-'}</td>
-                <td>{r.viewsMoM != null ? `${r.viewsMoM}%` : '-'}</td>
                 <td>{r.viewsYoY != null ? `${r.viewsYoY}%` : '-'}</td>
               </tr>
             ))}

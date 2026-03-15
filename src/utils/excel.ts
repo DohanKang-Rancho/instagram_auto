@@ -7,6 +7,7 @@ export function exportToExcel(
   dimension: string
 ): void {
   const data = rows.map((r) => ({
+    팔로워수: r.followerCount ?? '',
     차원: r.dimension,
     좋아요수: r.likes,
     댓글수: r.comments,
@@ -16,15 +17,12 @@ export function exportToExcel(
     '조회수 7일평균': r.avg7dViews,
     '좋아요 DoD(%)': r.likesDoD ?? '',
     '좋아요 WoW(%)': r.likesWoW ?? '',
-    '좋아요 MoM(%)': r.likesMoM ?? '',
     '좋아요 YoY(%)': r.likesYoY ?? '',
     '댓글 DoD(%)': r.commentsDoD ?? '',
     '댓글 WoW(%)': r.commentsWoW ?? '',
-    '댓글 MoM(%)': r.commentsMoM ?? '',
     '댓글 YoY(%)': r.commentsYoY ?? '',
     '조회수 DoD(%)': r.viewsDoD ?? '',
     '조회수 WoW(%)': r.viewsWoW ?? '',
-    '조회수 MoM(%)': r.viewsMoM ?? '',
     '조회수 YoY(%)': r.viewsYoY ?? '',
   }))
 

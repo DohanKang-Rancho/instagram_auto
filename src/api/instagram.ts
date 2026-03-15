@@ -24,12 +24,21 @@ export async function fetchProfile(username: string): Promise<unknown> {
   return res.json();
 }
 
-export async function fetchPosts(username: string): Promise<unknown> {
-  const res = await fetch(`${API_BASE}/instagram/posts/${encodeURIComponent(username)}`);
+export async function fetchPosts(
+  username: string,
+  startDate?: string,
+  endDate?: string
+): Promise<unknown> {
+  const params = new URLSearchParams()
+  if (startDate) params.set('startDate', startDate)
+  if (endDate) params.set('endDate', endDate)
+  const query = params.toString()
+  const endpoint = `${API_BASE}/instagram/posts/${encodeURIComponent(username)}${query ? `?${query}` : ''}`
+  const res = await fetch(endpoint);
   if (!res.ok) {
     const err = await parseErrorPayload(res);
     console.error('Instagram posts API failed', {
-      endpoint: `${API_BASE}/instagram/posts/${encodeURIComponent(username)}`,
+      endpoint,
       status: res.status,
       statusText: res.statusText,
       error: err,

@@ -1,4 +1,4 @@
-import type { ProfileMetricRow, InstagramPost, Dimension } from '../types';
+import type { ProfileMetricRow, InstagramPost, InstagramProfile, Dimension } from '../types';
 
 function parseDate(value: string | number | undefined): Date | null {
   if (!value) return null;
@@ -32,86 +32,134 @@ function pctChange(current: number, previous: number): number | undefined {
   return Number((((current - previous) / previous) * 100).toFixed(2));
 }
 
+function toDayStart(date: Date): Date {
+  const value = new Date(date);
+  value.setHours(0, 0, 0, 0);
+  return value;
+}
+
+function toDayEnd(date: Date): Date {
+  const value = new Date(date);
+  value.setHours(23, 59, 59, 999);
+  return value;
+}
+
+function dateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
 export function buildMetricRows(
   posts: InstagramPost[],
   dimension: Dimension,
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  followerCount?: number
 ): ProfileMetricRow[] {
-  const buckets: Record<
+  const rangeStart = toDayStart(startDate);
+  const rangeEnd = toDayEnd(endDate);
+
+  const dailyBuckets: Record<
     string,
-    { likes: number; comments: number; views: number; count: number; label: string }
+    { date: Date; likes: number; comments: number; views: number }
   > = {};
+
+  for (let cursor = new Date(rangeStart); cursor <= rangeEnd; cursor.setDate(cursor.getDate() + 1)) {
+    const key = dateKey(cursor);
+    dailyBuckets[key] = {
+      date: new Date(cursor),
+      likes: 0,
+      comments: 0,
+      views: 0,
+    };
+  }
 
   for (const p of posts) {
     const d = parseDate(p.taken_at ?? (p as unknown as { timestamp?: number }).timestamp);
-    if (!d || d < startDate || d > endDate) continue;
+    if (!d || d < rangeStart || d > rangeEnd) continue;
 
-    const key = getDimensionKey(d, dimension);
-    const label = formatDimensionLabel(d, dimension);
-    if (!buckets[key]) {
-      buckets[key] = { likes: 0, comments: 0, views: 0, count: 0, label };
+    const key = dateKey(d);
+    if (!dailyBuckets[key]) {
+      dailyBuckets[key] = { date: toDayStart(d), likes: 0, comments: 0, views: 0 };
     }
-    const b = buckets[key];
-    b.likes += p.like_count ?? 0;
-    b.comments += p.comment_count ?? 0;
-    b.views += p.video_view_count ?? 0;
-    b.count += 1;
+
+    const bucket = dailyBuckets[key];
+    bucket.likes += p.like_count ?? 0;
+    bucket.comments += p.comment_count ?? 0;
+    bucket.views += p.video_view_count ?? 0;
+  }
+
+  const buckets: Record<
+    string,
+    { likes: number; comments: number; views: number; label: string }
+  > = {};
+
+  for (const key of Object.keys(dailyBuckets).sort()) {
+    const daily = dailyBuckets[key];
+    const bucketKey = getDimensionKey(daily.date, dimension);
+    const label = formatDimensionLabel(daily.date, dimension);
+    if (!buckets[bucketKey]) {
+      buckets[bucketKey] = { likes: 0, comments: 0, views: 0, label };
+    }
+    const bucket = buckets[bucketKey];
+    bucket.likes += daily.likes;
+    bucket.comments += daily.comments;
+    bucket.views += daily.views;
   }
 
   const sortedKeys = Object.keys(buckets).sort();
-  const rows: ProfileMetricRow[] = sortedKeys.map((key) => {
+  const rows: ProfileMetricRow[] = sortedKeys.map((key, index) => {
     const b = buckets[key];
     return {
+      followerCount,
       dimension: b.label,
       dimensionType: dimension,
       likes: b.likes,
       comments: b.comments,
       views: b.views,
-      avg7dLikes: 0,
-      avg7dComments: 0,
-      avg7dViews: 0,
+      avg7dLikes: Number(
+        (
+          sortedKeys
+            .slice(Math.max(0, index - 6), index + 1)
+            .reduce((sum, bucketKey) => sum + buckets[bucketKey].likes, 0) /
+          Math.min(7, index + 1)
+        ).toFixed(2)
+      ),
+      avg7dComments: Number(
+        (
+          sortedKeys
+            .slice(Math.max(0, index - 6), index + 1)
+            .reduce((sum, bucketKey) => sum + buckets[bucketKey].comments, 0) /
+          Math.min(7, index + 1)
+        ).toFixed(2)
+      ),
+      avg7dViews: Number(
+        (
+          sortedKeys
+            .slice(Math.max(0, index - 6), index + 1)
+            .reduce((sum, bucketKey) => sum + buckets[bucketKey].views, 0) /
+          Math.min(7, index + 1)
+        ).toFixed(2)
+      ),
     };
   });
 
-  // 7일 평균: 해당 구간 포함 최근 7일치 데이터로 평균 (간단히 해당 행 이전 7일 슬라이딩은 생략하고, 전체 포스트 기준 7일 평균으로 대체)
-  const totalLikes = posts.reduce((s, p) => s + (p.like_count ?? 0), 0);
-  const totalComments = posts.reduce((s, p) => s + (p.comment_count ?? 0), 0);
-  const totalViews = posts.reduce((s, p) => s + (p.video_view_count ?? 0), 0);
-  const n = posts.length || 1;
-  const avg7L = totalLikes / n;
-  const avg7C = totalComments / n;
-  const avg7V = totalViews / n;
-
-  const withAvg = rows.map((r) => ({
-    ...r,
-    avg7dLikes: Math.round(avg7L * 100) / 100,
-    avg7dComments: Math.round(avg7C * 100) / 100,
-    avg7dViews: Math.round(avg7V * 100) / 100,
-  }));
-
   // DoD / WoW / MoM / YoY (이전 기간 대비 변화율)
-  for (let i = 0; i < withAvg.length; i++) {
-    const r = withAvg[i];
-    const prev = withAvg[i - 1];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const prev = rows[i - 1];
     if (prev) {
       r.likesDoD = pctChange(r.likes, prev.likes);
       r.commentsDoD = pctChange(r.comments, prev.comments);
       r.viewsDoD = pctChange(r.views, prev.views);
     }
-    const prevWeek = dimension === 'week' ? withAvg[i - 1] : withAvg[Math.max(0, i - 7)];
+    const prevWeek = dimension === 'week' ? rows[i - 1] : i >= 7 ? rows[i - 7] : undefined;
     if (prevWeek) {
       r.likesWoW = pctChange(r.likes, prevWeek.likes);
       r.commentsWoW = pctChange(r.comments, prevWeek.comments);
       r.viewsWoW = pctChange(r.views, prevWeek.views);
     }
-    const prevMonth = dimension === 'month' ? withAvg[i - 1] : withAvg[Math.max(0, i - 30)];
-    if (prevMonth) {
-      r.likesMoM = pctChange(r.likes, prevMonth.likes);
-      r.commentsMoM = pctChange(r.comments, prevMonth.comments);
-      r.viewsMoM = pctChange(r.views, prevMonth.views);
-    }
-    const prevYear = withAvg[Math.max(0, i - (dimension === 'month' ? 12 : 365))];
+    const yearOffset = dimension === 'month' ? 12 : dimension === 'week' ? 52 : 365;
+    const prevYear = i >= yearOffset ? rows[i - yearOffset] : undefined;
     if (prevYear) {
       r.likesYoY = pctChange(r.likes, prevYear.likes);
       r.commentsYoY = pctChange(r.comments, prevYear.comments);
@@ -119,7 +167,7 @@ export function buildMetricRows(
     }
   }
 
-  return withAvg;
+  return rows;
 }
 
 export function normalizeRapidApiPosts(data: unknown): InstagramPost[] {
@@ -179,4 +227,40 @@ export function normalizeRapidApiPosts(data: unknown): InstagramPost[] {
       media_type: String(node.__typename ?? node.media_type ?? i.media_type ?? ''),
     };
   });
+}
+
+export function normalizeRapidApiProfile(data: unknown): InstagramProfile {
+  if (!data || typeof data !== 'object') return {};
+
+  const obj = data as Record<string, unknown>;
+  const result = (obj.result ?? {}) as Record<string, unknown>;
+  const dataObj = (obj.data ?? {}) as Record<string, unknown>;
+  const profile = (
+    result.user ??
+    dataObj.user ??
+    obj.user ??
+    result.profile ??
+    dataObj.profile ??
+    obj.profile ??
+    result
+  ) as Record<string, unknown>;
+
+  const followerCount =
+    profile.follower_count ??
+    profile.followers ??
+    (profile.edge_followed_by as { count?: number } | undefined)?.count;
+  const followingCount =
+    profile.following_count ??
+    profile.following ??
+    (profile.edge_follow as { count?: number } | undefined)?.count;
+
+  return {
+    username: String(profile.username ?? ''),
+    full_name: String(profile.full_name ?? ''),
+    biography: String(profile.biography ?? ''),
+    follower_count: followerCount != null ? Number(followerCount) : undefined,
+    following_count: followingCount != null ? Number(followingCount) : undefined,
+    media_count: profile.media_count != null ? Number(profile.media_count) : undefined,
+    profile_pic_url: profile.profile_pic_url != null ? String(profile.profile_pic_url) : undefined,
+  };
 }

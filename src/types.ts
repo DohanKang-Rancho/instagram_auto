@@ -1,6 +1,7 @@
 export type Dimension = 'dai' | 'week' | 'month';
 
 export interface ProfileMetricRow {
+  followerCount?: number;
   dimension: string; // 날짜(YYYY-MM-DD) 또는 주/월 라벨
   dimensionType: Dimension;
   likes: number;
@@ -11,15 +12,12 @@ export interface ProfileMetricRow {
   avg7dViews: number;
   likesDoD?: number;
   likesWoW?: number;
-  likesMoM?: number;
   likesYoY?: number;
   commentsDoD?: number;
   commentsWoW?: number;
-  commentsMoM?: number;
   commentsYoY?: number;
   viewsDoD?: number;
   viewsWoW?: number;
-  viewsMoM?: number;
   viewsYoY?: number;
 }
 
