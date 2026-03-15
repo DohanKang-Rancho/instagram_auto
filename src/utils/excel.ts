@@ -7,8 +7,8 @@ export function exportToExcel(
   dimension: string
 ): void {
   const data = rows.map((r) => ({
-    팔로워수: r.followerCount ?? '',
     차원: r.dimension,
+    팔로워수: r.followerCount ?? '',
     좋아요수: r.likes,
     댓글수: r.comments,
     조회수: r.views,

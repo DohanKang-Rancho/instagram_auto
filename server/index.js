@@ -11,6 +11,49 @@ const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '';
 const RAPIDAPI_INSTAGRAM_HOST = process.env.RAPIDAPI_INSTAGRAM_HOST || 'instagram120.p.rapidapi.com';
 const PAGE_LIMIT = 20;
 
+async function requestProfile(url, init) {
+  const response = await fetch(url, init);
+  const text = await response.text();
+  let data = null;
+
+  try {
+    data = JSON.parse(text || '{}');
+  } catch {
+    data = { raw: text };
+  }
+
+  return { response, text, data };
+}
+
+function hasFollowerData(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const obj = payload;
+  const result = typeof obj.result === 'object' && obj.result ? obj.result : {};
+  const data = typeof obj.data === 'object' && obj.data ? obj.data : {};
+  const candidates = [
+    obj,
+    result,
+    data,
+    result.user,
+    data.user,
+    obj.user,
+    result.profile,
+    data.profile,
+    obj.profile,
+  ];
+
+  return candidates.some((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return false;
+    return (
+      candidate.follower_count != null ||
+      candidate.followers != null ||
+      (typeof candidate.edge_followed_by === 'object' &&
+        candidate.edge_followed_by &&
+        candidate.edge_followed_by.count != null)
+    );
+  });
+}
+
 function getEdges(payload) {
   if (!payload || typeof payload !== 'object') return [];
   const obj = payload;
@@ -72,25 +115,63 @@ app.get('/api/instagram/profile/:username', async (req, res) => {
 
   try {
     const host = RAPIDAPI_INSTAGRAM_HOST;
-    const url = `https://${host}/v1/profile?username_or_id=${encodeURIComponent(username)}`;
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'X-RapidAPI-Key': RAPIDAPI_KEY,
-        'X-RapidAPI-Host': host,
+    const baseHeaders = {
+      'Content-Type': 'application/json',
+      'X-RapidAPI-Key': RAPIDAPI_KEY,
+      'X-RapidAPI-Host': host,
+    };
+    const attempts = [
+      {
+        endpoint: '/api/instagram/profile',
+        method: 'GET',
+        url: `https://${host}/api/instagram/profile?username=${encodeURIComponent(username)}`,
       },
-    });
+      {
+        endpoint: '/api/instagram/profile',
+        method: 'POST',
+        url: `https://${host}/api/instagram/profile`,
+        body: JSON.stringify({ username }),
+      },
+      {
+        endpoint: '/api/instagram/user/info',
+        method: 'GET',
+        url: `https://${host}/api/instagram/user/info?username=${encodeURIComponent(username)}`,
+      },
+      {
+        endpoint: '/api/instagram/user/info',
+        method: 'POST',
+        url: `https://${host}/api/instagram/user/info`,
+        body: JSON.stringify({ username }),
+      },
+    ];
 
-    if (!response.ok) {
-      const text = await response.text();
-      return res.status(response.status).json({
-        error: 'RapidAPI 호출 실패',
+    const failures = [];
+
+    for (const attempt of attempts) {
+      const { response, text, data } = await requestProfile(attempt.url, {
+        method: attempt.method,
+        headers: baseHeaders,
+        body: attempt.body,
+      });
+
+      if (response.ok && hasFollowerData(data)) {
+        return res.json(data);
+      }
+
+      failures.push({
+        endpoint: attempt.endpoint,
+        method: attempt.method,
+        status: response.status,
+        statusText: response.statusText,
         detail: text.slice(0, 500),
       });
     }
 
-    const data = await response.json();
-    return res.json(data);
+    return res.status(502).json({
+      error: 'RapidAPI 프로필 호출 실패',
+      host,
+      attempts: failures,
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message || '서버 오류' });

@@ -173,8 +173,8 @@ function App() {
         <table className="data-table">
           <thead>
             <tr>
-              <th>팔로워 수</th>
               <th>차원</th>
+              <th>팔로워 수</th>
               <th>좋아요 수</th>
               <th>댓글 수</th>
               <th>조회수</th>
@@ -200,8 +200,8 @@ function App() {
             )}
             {rows.map((r, i) => (
               <tr key={`${r.dimension}-${i}`}>
-                <td>{r.followerCount?.toLocaleString() ?? '-'}</td>
                 <td>{r.dimension}</td>
+                <td>{r.followerCount?.toLocaleString() ?? '-'}</td>
                 <td>{r.likes.toLocaleString()}</td>
                 <td>{r.comments.toLocaleString()}</td>
                 <td>{r.views.toLocaleString()}</td>
